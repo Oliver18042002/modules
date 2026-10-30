@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#1f2328">
+<title>Module 3D</title>
+<style>
+  :root { --bg: #eef0f2; --bar: #1f2328; --ink: #f4f5f6; --muted: #9aa3ad; --accent: #e8483b; --chip: #2c323a; }
+  html, body { margin: 0; height: 100%; background: var(--bg); font: 15px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+  header { position: fixed; top: 0; left: 0; right: 0; background: var(--bar); color: var(--ink); padding: 10px 14px; padding-top: max(10px, env(safe-area-inset-top)); display: flex; align-items: baseline; gap: 10px; z-index: 2; }
+  header b { font-size: 17px; letter-spacing: .02em; }
+  header span { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  nav { position: fixed; left: 0; right: 0; bottom: 0; padding: 8px 8px; padding-bottom: max(8px, env(safe-area-inset-bottom)); display: flex; gap: 6px; overflow-x: auto; background: rgba(31,35,40,.92); z-index: 2; }
+  nav button { flex: 1 0 auto; min-height: 40px; padding: 0 10px; border: 0; border-radius: 20px; background: var(--chip); color: var(--ink); font: inherit; font-size: 13.5px; }
+  nav button.on { background: var(--accent); }
+  nav .sep { flex: 0 0 1px; background: #444b54; margin: 6px 2px; }
+  #info { position: fixed; left: 10px; right: 10px; bottom: 70px; bottom: calc(70px + env(safe-area-inset-bottom)); background: #fff; color: #1f2328; border-radius: 10px; padding: 10px 12px; box-shadow: 0 4px 18px rgba(0,0,0,.18); font-size: 14px; display: none; z-index: 2; }
+  #info { max-height: 42vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  #info .head { display: flex; align-items: flex-start; gap: 8px; position: sticky; top: -10px; background: #fff; padding: 2px 0 6px; }
+  #info .head b { flex: 1; font-size: 15px; }
+  #info .head button { border: 0; background: #e9ecef; border-radius: 14px; width: 28px; height: 28px; font-size: 18px; line-height: 1; color: #333; }
+  #info table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  #info th { text-align: left; font-weight: 500; color: #5f6873; padding: 3px 10px 3px 0; vertical-align: top; width: 42%; }
+  #info td { padding: 3px 0; word-break: break-word; }
+  #info tr + tr th, #info tr + tr td { border-top: 1px solid #eef0f2; }
+  #msg { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 30px; color: #3b434c; z-index: 1; pointer-events: none; }
+  #msg div { max-width: 340px; }
+  .bar { height: 4px; background: #d5d9dd; border-radius: 2px; margin-top: 12px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+  "web-ifc": "https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/web-ifc-api.js"
+} }
+</script>
+</head>
+<body>
+<header><b id="title">Module</b><span id="sub">3D model</span></header>
+<canvas id="c"></canvas>
+<div id="msg"><div><div id="msgtext">Loading the model…</div><div class="bar"><i id="prog"></i></div></div></div>
+<div id="info"></div>
+<nav>
+  <button data-view="iso" class="on">3D</button>
+  <button data-view="front">Front</button>
+  <button data-view="plan">Plan</button>
+  <button data-view="end">End</button>
+  <span class="sep"></span>
+  <button id="tSteel" class="on">Steel</button>
+  <button id="tSvc" class="on">Services</button>
+</nav>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import * as WebIFC from 'web-ifc';
+
+const WASM_PATH = 'https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/';
+const $ = (id) => document.getElementById(id);
+const say = (t) => { $('msg').style.display = 'flex'; $('msgtext').textContent = t; };
+
+// which model: ?m=<project>/<module>  ->  models/<project>/<module>.ifc next to this page
+const params = new URLSearchParams(location.search);
+const m = (params.get('m') || '').replace(/[^A-Za-z0-9 _\-\/.]/g, '').replace(/\.\./g, '');
+const parts = m.split('/').filter(Boolean);
+$('title').textContent = parts.length ? parts[parts.length - 1] : 'Module';
+$('sub').textContent = parts.length > 1 ? 'Project ' + parts.slice(0, -1).join(' / ') : '3D model';
+document.title = $('title').textContent + ' – 3D';
+
+// scene: IFC is Z-up, three is Y-up
+const canvas = $('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xeef0f2);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1000);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.12;
+controls.screenSpacePanning = true;
+controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f96, 2.2));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(3, 6, 4);
+scene.add(sun);
+const root = new THREE.Group();
+root.rotation.x = -Math.PI / 2;
+scene.add(root);
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+(function loop() { controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop); })();
+
+// load
+const mats = new Map();
+function material(c) {
+  const key = [c.x, c.y, c.z, c.w].map((v) => v.toFixed(3)).join();
+  if (!mats.has(key)) {
+    mats.set(key, new THREE.MeshLambertMaterial({ color: new THREE.Color(c.x, c.y, c.z), transparent: c.w < 0.99,
+      opacity: c.w, side: THREE.DoubleSide, depthWrite: c.w >= 0.99 }));
+  }
+  return mats.get(key);
+}
+
+let ifc, modelID, box = null;
+const STEEL = new Set(['IFCBUILDINGELEMENTPROXY', 'IFCBEAM', 'IFCMEMBER', 'IFCCOLUMN', 'IFCPLATE']);
+
+async function load() {
+  if (!parts.length) { say('No module in the link. Scan the QR code on the module drawing.'); return; }
+  const url = 'models/' + parts.map(encodeURIComponent).join('/') + '.ifc';
+  let res;
+  try { res = await fetch(url, { cache: 'no-cache' }); } catch (e) { res = null; }
+  if (!res || !res.ok) { say('This module\'s model isn\'t online yet (' + url + '). Ask the office to publish it.'); return; }
+  const total = +res.headers.get('content-length') || 0;
+  const reader = res.body.getReader();
+  const chunks = []; let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value); got += value.length;
+    if (total) $('prog').style.width = (got / total * 70) + '%';
+  }
+  const data = new Uint8Array(got);
+  let o = 0; for (const c of chunks) { data.set(c, o); o += c.length; }
+  say('Building the 3D view…');
+  ifc = new WebIFC.IfcAPI();
+  ifc.SetWasmPath(WASM_PATH, true);
+  await ifc.Init();
+  modelID = ifc.OpenModel(data, { COORDINATE_TO_ORIGIN: true });
+  ifc.StreamAllMeshes(modelID, (mesh) => {
+    const geoms = mesh.geometries;
+    let type = '';
+    try { type = ifc.GetNameFromTypeCode(ifc.GetLineType(modelID, mesh.expressID)).toUpperCase(); } catch (e) {}
+    for (let i = 0; i < geoms.size(); i++) {
+      const pg = geoms.get(i);
+      const g = ifc.GetGeometry(modelID, pg.geometryExpressID);
+      const v = ifc.GetVertexArray(g.GetVertexData(), g.GetVertexDataSize());
+      const idx = ifc.GetIndexArray(g.GetIndexData(), g.GetIndexDataSize());
+      const pos = new Float32Array(v.length / 2), nor = new Float32Array(v.length / 2);
+      for (let k = 0, j = 0; k < v.length; k += 6, j += 3) {
+        pos[j] = v[k]; pos[j + 1] = v[k + 1]; pos[j + 2] = v[k + 2];
+        nor[j] = v[k + 3]; nor[j + 1] = v[k + 4]; nor[j + 2] = v[k + 5];
+      }
+      const bg = new THREE.BufferGeometry();
+      bg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      bg.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      bg.setIndex(new THREE.BufferAttribute(idx, 1));
+      const me = new THREE.Mesh(bg, material(pg.color));
+      me.matrixAutoUpdate = false;
+      me.matrix.fromArray(pg.flatTransformation);
+      me.userData = { id: mesh.expressID, steel: STEEL.has(type), type };
+      root.add(me);
+      g.delete();
+    }
+  });
+  root.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(root);
+  if (box.isEmpty()) { say('The model file has no 3D geometry in it.'); return; }
+  $('msg').style.display = 'none';
+  view('iso');
+}
+
+// camera presets, fitted to the model
+function view(name) {
+  if (!box) return;
+  const c = box.getCenter(new THREE.Vector3());
+  const s = box.getSize(new THREE.Vector3());
+  const r = s.length() / 2 || 1;
+  // three axes: x = module length, y = up, z = towards the viewer (IFC -Y)
+  const dirs = { iso: [1, 0.8, 1.15], front: [0, 0, 1], plan: [0, 1, 0.0001], end: [1, 0, 0] };
+  const d = new THREE.Vector3(...dirs[name]).normalize();
+  const dist = r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * (camera.aspect < 1 ? 1.15 / camera.aspect ** 0.5 : 1.05);
+  camera.near = dist / 100; camera.far = dist * 20; camera.updateProjectionMatrix();
+  camera.position.copy(c).addScaledVector(d, dist);
+  controls.target.copy(c);
+  controls.update();
+  document.querySelectorAll('nav [data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === name));
+}
+document.querySelectorAll('nav [data-view]').forEach((b) => b.addEventListener('click', () => view(b.dataset.view)));
+
+function toggle(btn, steel) {
+  btn.classList.toggle('on');
+  const on = btn.classList.contains('on');
+  root.traverse((o) => { if (o.isMesh && o.userData.steel === steel) o.visible = on; });
+  $('info').style.display = 'none';
+}
+$('tSteel').addEventListener('click', () => toggle($('tSteel'), true));
+$('tSvc').addEventListener('click', () => toggle($('tSvc'), false));
+
+// tap a part for its properties
+function clearHighlight() {
+  root.children.forEach((o) => { if (o.userData.hl) { o.material = o.userData.hl; delete o.userData.hl; } });
+}
+const ray = new THREE.Raycaster();
+let down = null;
+canvas.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
+canvas.addEventListener('pointerup', (e) => {
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 6 || !ifc) return;
+  const p = new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(p, camera);
+  const hit = ray.intersectObjects(root.children.filter((o) => o.visible), false)[0];
+  clearHighlight();
+  if (!hit) { $('info').style.display = 'none'; return; }
+  const id = hit.object.userData.id;
+  const hl = new THREE.MeshLambertMaterial({ color: 0xffcc00, side: THREE.DoubleSide });
+  root.children.forEach((o) => { if (o.userData.id === id) { o.userData.hl = o.material; o.material = hl; } });
+  showInfo(id, hit.object.userData.type);
+});
+
+// properties bar: the important ones first (item, what it is, size, service, length...), then the rest
+const KEY = [/item/i, /^(type|ring_?member_?type|family and type|family)$/i, /product.*desc|description/i, /^size$|overall size/i,
+  /service/i, /section/i, /length/i, /insulation/i, /material/i, /spool/i, /frame/i];
+const SKIP = /guid|^id$|ifc|phase|workset|category|design option|created|edited|level|host|offset|elevation|^is|export|image|url|comments?$/i;
+function fmt(v) {
+  if (typeof v === 'number') return Math.abs(v) >= 1000 || Number.isInteger(v) ? String(Math.round(v * 10) / 10) : String(Math.round(v * 1000) / 1000);
+  return String(v);
+}
+async function showInfo(id, type) {
+  let name = '';
+  const props = new Map();
+  try { const l = ifc.GetLine(modelID, id); name = (l.Name && l.Name.value) || ''; } catch (e) {}
+  try {
+    const sets = await ifc.properties.getPropertySets(modelID, id, true);
+    for (const ps of sets) for (const pr of (ps.HasProperties || ps.Quantities || [])) {
+      const n = pr.Name && pr.Name.value;
+      const raw = pr.NominalValue || pr.LengthValue || pr.AreaValue || pr.VolumeValue;
+      const v = raw && raw.value;
+      if (!n || v === undefined || v === null || v === '' || SKIP.test(n) || props.has(n)) continue;
+      if (typeof v === 'boolean') continue;
+      props.set(n, fmt(v));
+    }
+  } catch (e) {}
+  const rows = [...props.entries()];
+  const rank = ([n]) => { const i = KEY.findIndex((r) => r.test(n)); return i < 0 ? 99 : i; };
+  rows.sort((a, b) => rank(a) - rank(b));
+  const item = rows.find(([n]) => /item/i.test(n));
+  const box = $('info');
+  box.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'head';
+  const b = document.createElement('b');
+  b.textContent = (item ? 'Item ' + item[1] + ' – ' : '') + (name || type.replace(/^IFC/, ''));
+  const x = document.createElement('button');
+  x.textContent = '×'; x.setAttribute('aria-label', 'Close');
+  x.onclick = () => { box.style.display = 'none'; clearHighlight(); };
+  head.append(b, x);
+  const tbl = document.createElement('table');
+  for (const [n, v] of rows) {
+    if (item && n === item[0]) continue;
+    const tr = document.createElement('tr');
+    const th = document.createElement('th'); th.textContent = n.replace(/_/g, ' ');
+    const td = document.createElement('td'); td.textContent = v;
+    tr.append(th, td); tbl.append(tr);
+  }
+  if (!rows.length) {
+    const tr = document.createElement('tr'); const td = document.createElement('td');
+    td.textContent = type.replace(/^IFC/, '') + ' (no properties in the file)'; tr.append(td); tbl.append(tr);
+  }
+  box.append(head, tbl);
+  box.style.display = 'block';
+  box.scrollTop = 0;
+}
+
+load().catch((e) => say('Could not open the model: ' + e.message));
+</script>
+</body>
+</html>
